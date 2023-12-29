@@ -2,9 +2,7 @@
 // © konslip
 
 //@version=5
-strategy("Levels union logic", overlay=true, margin_long=100, margin_short=100)
-
-
+strategy("Levels union logic", overlay=true, initial_capital=100, calc_on_every_tick=false)
 
 int volume_bar_amount = 30*3
 int volume_level_cnt = 10*3
@@ -13,13 +11,63 @@ int volume_min_levels_in_cluster = 7*2
 int minmax_window = 31
 int minmax_center_bar = int(minmax_window / 2)
 float minmax_volume_thresh = 1.2
-bool minmax_vol_filter_off = false
+bool minmax_vol_filter_off = true
 
+float max_level_rel_diff = 0.003
 
 var VolumeLevels = array.new_float()
 
 float min_level = 1000000000
 float max_level = -1000000000
+
+float nearest_up_level_top1 = na
+float nearest_up_level_top2 = na
+float nearest_up_level_top3 = na
+float nearest_low_level_top1 = na
+float nearest_low_level_top2 = na
+float nearest_low_level_top3 = na
+float nearest_low_level_top4 = na
+
+atr = ta.atr(minmax_window)
+current_bar_change = math.abs(close - open) 
+
+get_clustered_levels(Levels) =>
+    uniqueLevels = array.new_float()
+    valueCounts = array.new_int()
+
+    if Levels.size() > 0
+
+        levels_in_cluster = array.new_float()
+        first_level_price = -1.
+        for i=0 to array.size(Levels)-1
+            level_price = Levels.get(i)
+            
+            if first_level_price == -1.
+                first_level_price := level_price
+
+            rel_diff = level_price / first_level_price - 1
+
+            if rel_diff < max_level_rel_diff
+                levels_in_cluster.push(level_price)
+            else
+                cluster_price = array.avg(levels_in_cluster)
+                cnt = array.size(levels_in_cluster)
+                uniqueLevels.push(cluster_price)
+                valueCounts.push(cnt)
+
+                levels_in_cluster := array.new_float(1, level_price)
+                first_level_price := level_price
+
+        if levels_in_cluster.size() > 0
+            cluster_price = array.avg(levels_in_cluster)
+            cnt = array.size(levels_in_cluster)
+            uniqueLevels.push(cluster_price)
+            valueCounts.push(cnt)
+    
+    [uniqueLevels, valueCounts]
+
+//i_from = input.time(defval = timestamp("28 Sep 2022 00:00 +0000"), title = "From")
+//if time >= i_from
 
 for i = 0 to volume_bar_amount-1
     if (hl2[i] > max_level)
@@ -28,11 +76,11 @@ for i = 0 to volume_bar_amount-1
         min_level := hl2[i]
 
 //float[] level_prices = na
-level_prices = array.new_float(volume_level_cnt)
+level_prices = array.new_float()
 
-for j = 0 to volume_level_cnt-1
-    level_price = min_level + ((max_level - min_level) / 30) * j
-    level_prices.set(j, level_price)
+for j = 0 to volume_level_cnt
+    level_price = min_level + ((max_level - min_level) / volume_level_cnt) * j
+    level_prices.push(level_price)
 
 level_volumes = array.new_float(volume_level_cnt, 0)
 for i = 0 to volume_bar_amount
@@ -46,7 +94,7 @@ for i = 0 to volume_bar_amount
             break
 
     accum_volume = level_volumes.get(nearest_index)
-    accum_volume += volume[i]
+    accum_volume += volume[i] * ohlc4[i]
     level_volumes.set(nearest_index, accum_volume)
 
 
@@ -86,40 +134,6 @@ VolumeLevels.push(level_price_top1)
 
 VolumeLevels.sort()
 
-get_clustered_levels(Levels) =>
-    uniqueLevels = array.new_float()
-    valueCounts = array.new_int()
-
-    levels_in_cluster = array.new_float()
-    max_level_rel_diff = 0.003*3
-    first_level_price = -1.
-    for i=0 to array.size(Levels)-1
-        level_price = Levels.get(i)
-        
-        if first_level_price == -1.
-            first_level_price := level_price
-
-        rel_diff = level_price / first_level_price - 1
-
-        if rel_diff < max_level_rel_diff
-            levels_in_cluster.push(level_price)
-        else
-            cluster_price = array.avg(levels_in_cluster)
-            cnt = array.size(levels_in_cluster)
-            uniqueLevels.push(cluster_price)
-            valueCounts.push(cnt)
-
-            levels_in_cluster := array.new_float()
-            first_level_price := level_price
-
-    if levels_in_cluster.size() > 0
-        cluster_price = array.avg(levels_in_cluster)
-        cnt = array.size(levels_in_cluster)
-        uniqueLevels.push(cluster_price)
-        valueCounts.push(cnt)
-    
-    [uniqueLevels, valueCounts]
-
 [uniqueVolumeLevels, valueCounts] = get_clustered_levels(VolumeLevels)
 
 currentVolumeLevels = array.new_float()
@@ -155,8 +169,6 @@ center_high_level = high[minmax_center_bar]
 if center_high_level == highest_high and (center_volume > avg_volume * minmax_volume_thresh or minmax_vol_filter_off)
     MinMaxLevels.push(center_high_level)
 
-atr = ta.atr(minmax_window)
-current_bar_change = math.abs(close - open) 
 current_bar_volume = volume
 
 if current_bar_change > atr * 2 and current_bar_volume > avg_volume * minmax_volume_thresh
@@ -173,16 +185,22 @@ if bearishPinbarCondition and current_bar_volume > avg_volume * minmax_volume_th
 
 MinMaxLevels.sort()
 
-[uniqueMinMaxLevels, _] = get_clustered_levels(MinMaxLevels)
+[uniqueMinMaxLevels, cnts] = get_clustered_levels(MinMaxLevels)
 
-//Levels = array.concat(currentVolumeLevels, uniqueMinMaxLevels)
+currentMinMaxLevels = array.new_float()
+
+for i=0 to uniqueMinMaxLevels.size()-1
+    if cnts.get(i) > 1
+        currentMinMaxLevels.push(uniqueMinMaxLevels.get(i))
+
+Levels = array.concat(currentVolumeLevels, currentMinMaxLevels)
 //Levels = currentVolumeLevels
-Levels = uniqueMinMaxLevels
+//Levels = currentMinMaxLevels
+Levels.sort()
+[uniqueLevels, _] = get_clustered_levels(Levels)
+Levels := uniqueLevels
 Levels.sort()
 
-float nearest_up_level_top1 = na
-float nearest_up_level_top2 = na
-float nearest_up_level_top3 = na
 if array.size(Levels) > 0
     for i=0 to array.size(Levels)-1
         level_price = Levels.get(i)
@@ -194,53 +212,6 @@ if array.size(Levels) > 0
                 nearest_up_level_top3 := Levels.get(i+2)
             break
 
-float nearest_low_level_top1 = na
-float nearest_low_level_top2 = na
-float nearest_low_level_top3 = na
-float nearest_low_level_top4 = na
-if array.size(Levels) > 0
-    for i=array.size(Levels)-1 to 0
-        level_price = Levels.get(i)
-        if level_price < low
-            nearest_low_level_top1 := level_price
-            if Levels.size() > i-1 and i > 1
-                nearest_low_level_top2 := Levels.get(i-1)
-            if Levels.size() > i-2 and i > 2
-                nearest_low_level_top3 := Levels.get(i-2)
-            if Levels.size() > i-3 and i > 3
-                nearest_low_level_top4 := Levels.get(i-3)
-            break
-
-upline = plot(nearest_up_level_top1, color = color.rgb(111, 0, 255), style=plot.style_stepline)
-upline_top2 = plot(nearest_up_level_top2, color = color.rgb(111, 0, 255), style=plot.style_stepline)
-upline_top3 = plot(nearest_up_level_top3, color = color.rgb(111, 0, 255), style=plot.style_stepline)
-lowline = plot(nearest_low_level_top1, color = color.blue, style=plot.style_stepline)
-lowline_top2 = plot(nearest_low_level_top2, color = color.blue, style=plot.style_stepline)
-lowline_top3 = plot(nearest_low_level_top3, color = color.blue, style=plot.style_stepline)
-
-//Levels = array.concat(currentVolumeLevels, uniqueMinMaxLevels)
-Levels := currentVolumeLevels
-//Levels := uniqueMinMaxLevels
-Levels.sort()
-
-nearest_up_level_top1 := na
-nearest_up_level_top2 := na
-nearest_up_level_top3 := na
-if array.size(Levels) > 0
-    for i=0 to array.size(Levels)-1
-        level_price = Levels.get(i)
-        if level_price > high
-            nearest_up_level_top1 := level_price
-            if Levels.size() > i+1 and i < Levels.size()-1
-                nearest_up_level_top2 := Levels.get(i+1)
-            if Levels.size() > i+2 and i < Levels.size()-2
-                nearest_up_level_top3 := Levels.get(i+2)
-            break
-
-nearest_low_level_top1 := na
-nearest_low_level_top2 := na
-nearest_low_level_top3 := na
-nearest_low_level_top4 := na
 if array.size(Levels) > 0
     for i=array.size(Levels)-1 to 0
         level_price = Levels.get(i)
