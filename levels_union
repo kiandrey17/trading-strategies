@@ -196,7 +196,7 @@ bullishPinbarCondition = (high - close) / close < 0.01 and (high - open) / open 
 if bullishPinbarCondition and current_bar_volume > avg_volume * minmax_volume_thresh
     MinMaxLevels.push(low)
 
-bearishPinbarCondition = (close - low) / low < 0.001 and (open - low) / low < 0.001 and (high - low) / low > 0.01
+bearishPinbarCondition = (close - low) / low < 0.01 and (open - low) / low < 0.01 and (high - low) / low > 0.03
 if bearishPinbarCondition and current_bar_volume > avg_volume * minmax_volume_thresh
     MinMaxLevels.push(high)
 
